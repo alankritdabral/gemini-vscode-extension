@@ -57,10 +57,9 @@ class GeminiProcess {
         try {
             const config = vscode.workspace.getConfiguration('gemini');
             const geminiPath = config.get('cliPath') || 'gemini';
-            const cwd = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
-            this.outputChannel.appendLine(`[Extension] Attempting to spawn: ${geminiPath}`);
+            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            this.outputChannel.appendLine(`[Extension] Attempting to spawn: ${geminiPath} in ${cwd}`);
             const args = ['-p', prompt, '-r', sessionId, '--output-format', 'stream-json'];
-            // Use shell: true only on Windows or if path contains spaces
             const useShell = process.platform === 'win32' || geminiPath.includes(' ');
             this.process = (0, node_child_process_1.spawn)(geminiPath, args, {
                 env: { ...process.env, FORCE_COLOR: '0', PYTHONUNBUFFERED: '1' },
@@ -78,34 +77,18 @@ class GeminiProcess {
                 const rawText = data.toString();
                 this.outputChannel.append(`[STDOUT] ${rawText}`);
                 this._buffer += rawText;
-                let lineEndIndex;
-                while (true) {
-                    const nIndex = this._buffer.indexOf('\\n');
-                    const rIndex = this._buffer.indexOf('\\r');
-                    if (nIndex === -1 && rIndex === -1) {
-                        break;
-                    }
-                    if (nIndex !== -1 && (rIndex === -1 || nIndex < rIndex)) {
-                        lineEndIndex = nIndex;
-                    }
-                    else {
-                        lineEndIndex = rIndex;
-                    }
-                    const line = this._buffer.slice(0, lineEndIndex).trim();
-                    this._buffer = this._buffer.slice(lineEndIndex + 1);
-                    // Handle \r\n
-                    if (lineEndIndex === rIndex && this._buffer.startsWith('\\n')) {
-                        this._buffer = this._buffer.slice(1);
-                    }
-                    if (line.startsWith('{')) {
+                const lines = this._buffer.split(/\r?\n/);
+                this._buffer = lines.pop() || '';
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (trimmed.startsWith('{')) {
                         try {
-                            const event = JSON.parse(line);
+                            const event = JSON.parse(trimmed);
                             this.handleEvent(event);
                         }
                         catch (e) {
-                            // Only log if it really looks like JSON
-                            if (line.includes('"type":')) {
-                                console.error('Failed to parse JSON:', line, e);
+                            if (trimmed.includes('"type":')) {
+                                this.outputChannel.appendLine(`[Extension] JSON Parse Error: ${e}`);
                             }
                         }
                     }
@@ -121,31 +104,28 @@ class GeminiProcess {
             });
             this.process.on('close', (code) => {
                 this.outputChannel.appendLine(`[Extension] Gemini CLI exited with code: ${code}`);
+                // Final flush
+                if (this._buffer.trim().startsWith('{')) {
+                    try {
+                        const event = JSON.parse(this._buffer.trim());
+                        this.handleEvent(event);
+                    }
+                    catch (e) { }
+                }
                 this.isActive = false;
                 this.onExitCallback(code);
                 this.process = null;
             });
             this.process.on('error', (err) => {
                 this.isActive = false;
-                if (err.code === 'ENOENT') {
-                    vscode.window.showErrorMessage(`Gemini CLI not found at "${geminiPath}". Please ensure it is installed and in your PATH.`, 'Open Settings').then(selection => {
-                        if (selection === 'Open Settings') {
-                            vscode.commands.executeCommand('workbench.action.openSettings', 'gemini.cliPath');
-                        }
-                    });
-                }
-                else {
-                    this.onErrorCallback(err.message);
-                }
+                this.outputChannel.appendLine(`[Extension] Process Error: ${err.message}`);
+                this.onErrorCallback(err.message);
             });
         }
         catch (error) {
             this.isActive = false;
             this.onErrorCallback(error.message);
         }
-    }
-    sendInput(text) {
-        // No longer used for single-query approach
     }
     stop() {
         if (this.process) {
@@ -171,8 +151,7 @@ class GeminiProcess {
         }
     }
     stripAnsi(text) {
-        // eslint-disable-next-line no-control-regex
-        const ansiRegex = /[\\u001b\\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+        const ansiRegex = /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
         return text.replace(ansiRegex, '');
     }
 }

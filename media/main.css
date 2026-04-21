@@ -4,8 +4,8 @@ body {
     display: flex;
     flex-direction: column;
     height: 100vh;
-    background-color: var(--vscode-sideBar-background);
-    color: var(--vscode-sideBar-foreground);
+    background-color: var(--vscode-editor-background);
+    color: var(--vscode-editor-foreground);
     font-family: var(--vscode-font-family);
     overflow: hidden;
 }
@@ -22,15 +22,20 @@ body {
     padding: 10px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
+    min-height: 50px;
+    /* Debug border - remove after fix */
+    border: 1px solid var(--vscode-widget-border);
 }
 
 .message {
     padding: 8px 12px;
-    border-radius: 6px;
+    border-radius: 4px;
     max-width: 90%;
     word-wrap: break-word;
     white-space: pre-wrap;
+    line-height: 1.4;
+    font-size: var(--vscode-font-size);
 }
 
 .user-message {
@@ -41,25 +46,39 @@ body {
 
 .assistant-message {
     align-self: flex-start;
-    background-color: var(--vscode-editor-background);
-    color: var(--vscode-editor-foreground);
+    background-color: var(--vscode-editorWidget-background);
+    color: var(--vscode-editorWidget-foreground);
     border: 1px solid var(--vscode-widget-border);
+}
+
+.assistant-message.thinking {
+    font-style: italic;
+    opacity: 0.6;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 0.3; }
+    50% { opacity: 0.7; }
+    100% { opacity: 0.3; }
 }
 
 .error-message {
     align-self: center;
-    background-color: var(--vscode-errorForeground);
-    color: var(--vscode-editor-background);
+    background-color: var(--vscode-inputValidation-errorBackground);
+    color: var(--vscode-inputValidation-errorForeground);
+    border: 1px solid var(--vscode-inputValidation-errorBorder);
     font-size: 0.9em;
 }
 
 #input-container {
     padding: 10px;
-    background-color: var(--vscode-sideBar-background);
+    background-color: var(--vscode-editor-background);
     border-top: 1px solid var(--vscode-widget-border);
     display: flex;
     flex-direction: column;
     gap: 8px;
+    z-index: 100;
 }
 
 #prompt {
@@ -69,9 +88,10 @@ body {
     background-color: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border);
-    border-radius: 4px;
-    resize: vertical;
+    border-radius: 2px;
+    resize: none;
     font-family: inherit;
+    font-size: var(--vscode-font-size);
 }
 
 #controls {
@@ -94,7 +114,7 @@ button:hover {
 }
 
 button#stop-btn {
-    background-color: var(--vscode-errorForeground);
+    background-color: var(--vscode-statusBarItem-errorBackground, #c72e2e);
 }
 
 button#clear-btn {
