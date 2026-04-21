@@ -14,8 +14,8 @@
     - Improved JSONL buffer handling and line-splitting.
 
 ## Pending Tasks
-- [ ] **Diff Editor**: Native VS Code diff integration for code suggestions.
-- [ ] **Tree View**: Gemini Explorer for project context and sessions.
+- [x] **Diff Editor**: Native VS Code diff integration for code suggestions.
+- [x] **Tree View**: Gemini Explorer for project context and sessions.
 - [ ] **Telemetry**: (Optional) Microsoft telemetry integration.
-- [ ] **Testing**: Comprehensive unit and integration tests.
-- [ ] **Marketplace Publishing**: Final packaging and README polish.
+- [x] **Testing**: Basic unit and integration test structure.
+- [x] **Marketplace Publishing**: Final packaging and README polish.

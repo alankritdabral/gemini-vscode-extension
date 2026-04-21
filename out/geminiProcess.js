@@ -36,19 +36,22 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.GeminiProcess = void 0;
 const node_child_process_1 = require("node:child_process");
 const vscode = __importStar(require("vscode"));
+const os = __importStar(require("node:os"));
 class GeminiProcess {
     process = null;
     onDataCallback;
     onErrorCallback;
     onExitCallback;
+    onSuggestionCallback;
     isActive = false;
     _buffer = '';
     outputChannel;
-    constructor(onData, onError, onExit, outputChannel) {
+    constructor(onData, onError, onExit, outputChannel, onSuggestion) {
         this.onDataCallback = onData;
         this.onErrorCallback = onError;
         this.onExitCallback = onExit;
         this.outputChannel = outputChannel;
+        this.onSuggestionCallback = onSuggestion;
     }
     start(prompt, sessionId = 'latest') {
         if (this.process) {
@@ -56,19 +59,38 @@ class GeminiProcess {
         }
         try {
             const config = vscode.workspace.getConfiguration('gemini');
-            const geminiPath = config.get('cliPath') || 'gemini';
-            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            this.outputChannel.appendLine(`[Extension] Attempting to spawn: ${geminiPath} in ${cwd}`);
-            const args = ['-p', prompt, '-r', sessionId, '--output-format', 'stream-json'];
-            const useShell = process.platform === 'win32' || geminiPath.includes(' ');
-            this.process = (0, node_child_process_1.spawn)(geminiPath, args, {
+            let geminiPath = config.get('cliPath');
+            if (!geminiPath || geminiPath === 'gemini') {
+                geminiPath = '/home/alankrit/.nvm/versions/node/v20.20.2/bin/gemini';
+            }
+            const nodePath = '/home/alankrit/.nvm/versions/node/v20.20.2/bin/node';
+            const fallbackCwd = os.tmpdir();
+            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || fallbackCwd;
+            this.outputChannel.appendLine(`[Extension] Attempting to spawn: ${nodePath} ${geminiPath} in ${cwd}${cwd === fallbackCwd ? ' (fallback)' : ''}`);
+            const args = [
+                geminiPath,
+                '-p', prompt,
+                '-r', sessionId,
+                '--output-format', 'stream-json',
+                '--approval-mode', 'auto_edit'
+            ];
+            this.process = (0, node_child_process_1.spawn)(nodePath, args, {
                 env: { ...process.env, FORCE_COLOR: '0', PYTHONUNBUFFERED: '1' },
-                shell: useShell,
+                shell: false,
                 cwd: cwd
             });
             if (!this.process) {
                 throw new Error('Spawn returned null process.');
             }
+            this.process.on('error', (err) => {
+                if (err.code === 'ENOENT') {
+                    this.onErrorCallback(`Error: '${nodePath}' or '${geminiPath}' not found. Please ensure Node v20 and Gemini CLI are installed.`);
+                }
+                else {
+                    this.onErrorCallback(`Process error: ${err.message}`);
+                }
+                this.isActive = false;
+            });
             this.process.on('spawn', () => {
                 this.outputChannel.appendLine(`[Extension] Process spawned successfully (PID: ${this.process?.pid})`);
             });
@@ -116,11 +138,6 @@ class GeminiProcess {
                 this.onExitCallback(code);
                 this.process = null;
             });
-            this.process.on('error', (err) => {
-                this.isActive = false;
-                this.outputChannel.appendLine(`[Extension] Process Error: ${err.message}`);
-                this.onErrorCallback(err.message);
-            });
         }
         catch (error) {
             this.isActive = false;
@@ -141,7 +158,15 @@ class GeminiProcess {
             }
         }
         else if (event.type === 'tool_use') {
-            this.onDataCallback(`[Tool Use: ${event.tool_name}]`);
+            this.outputChannel.appendLine(`[Extension] Tool Use: ${event.tool_name} with params: ${JSON.stringify(event.parameters)}`);
+            if (event.tool_name === 'write_file' || event.tool_name === 'replace') {
+                if (this.onSuggestionCallback) {
+                    this.onSuggestionCallback({ tool: event.tool_name, parameters: event.parameters });
+                }
+            }
+            else {
+                this.onDataCallback(`[Tool Use: ${event.tool_name}]`);
+            }
         }
         else if (event.type === 'error') {
             this.onErrorCallback(event.message || 'Unknown error');

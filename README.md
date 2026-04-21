@@ -5,6 +5,8 @@ A Visual Studio Code extension that provides a beautiful, integrated chat interf
 ## Features
 
 - **Integrated Sidebar Chat**: Chat with Gemini directly from your VS Code Activity Bar alongside your code.
+- **Sessions Tree View**: Quickly access, resume, and manage your recent Gemini sessions in the sidebar.
+- **Native Diff Editor**: Review suggested code changes side-by-side with your original file before applying them.
 - **Syntax Highlighting**: Beautiful code blocks with GitHub Dark styling via `highlight.js`.
 - **Markdown Support**: Rich text rendering including bold, italics, lists, and tables.
 - **Streaming Responses**: Real-time message streaming with a "Thinking..." indicator.

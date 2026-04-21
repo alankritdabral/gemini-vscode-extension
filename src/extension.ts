@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { GeminiProcess } from './geminiProcess';
 import { spawn } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 export function activate(context: vscode.ExtensionContext) {
     try {
@@ -25,6 +28,9 @@ export function activate(context: vscode.ExtensionContext) {
                 statusItem.backgroundColor = undefined;
             }
         });
+
+        const sessionsProvider = new GeminiSessionsProvider(outputChannel);
+        vscode.window.registerTreeDataProvider('gemini-cli-ui.sessionsView', sessionsProvider);
 
         context.subscriptions.push(
             vscode.window.registerWebviewViewProvider(GeminiChatViewProvider.viewType, provider)
@@ -58,6 +64,15 @@ export function activate(context: vscode.ExtensionContext) {
                 if (selected) {
                     provider.resumeSession(selected.detail);
                 }
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('gemini-cli-ui.resumeSessionFromTree', (sessionId: string) => {
+                provider.resumeSession(sessionId);
+            }),
+            vscode.commands.registerCommand('gemini-cli-ui.refreshSessions', () => {
+                sessionsProvider.refresh();
             })
         );
     } catch (e: any) {
@@ -97,18 +112,33 @@ class GeminiChatViewProvider implements vscode.WebviewViewProvider {
 
     public async getSessions(): Promise<any[]> {
         const config = vscode.workspace.getConfiguration('gemini');
-        const geminiPath = config.get<string>('cliPath') || 'gemini';
-        const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        let geminiPath = config.get<string>('cliPath');
+        if (!geminiPath || geminiPath === 'gemini') {
+            geminiPath = '/home/alankrit/.nvm/versions/node/v20.20.2/bin/gemini';
+        }
+        const nodePath = '/home/alankrit/.nvm/versions/node/v20.20.2/bin/node';
+        const fallbackCwd = os.tmpdir();
+        const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || fallbackCwd;
+
+        this._outputChannel.appendLine(`[Extension] Listing sessions with ${nodePath} ${geminiPath} in ${cwd}${cwd === fallbackCwd ? ' (fallback)' : ''}`);
 
         return new Promise((resolve) => {
-            const child = spawn(geminiPath, ['--list-sessions'], { cwd, shell: true });
+            const child = spawn(nodePath, [geminiPath, '--list-sessions'], { cwd, shell: false });
             let stdout = '';
-            
+            let errorOccurred = false;
+
+            child.on('error', (err: any) => {
+                errorOccurred = true;
+                this._outputChannel.appendLine(`[Error] Failed to list sessions: ${err.message}`);
+                resolve([]);
+            });
+
             child.stdout.on('data', (data) => {
                 stdout += data.toString();
             });
 
             child.on('close', (code) => {
+                if (errorOccurred) return;
                 if (code !== 0) {
                     this._outputChannel.appendLine(`[Error] Failed to list sessions with code: ${code}`);
                     resolve([]);
@@ -221,9 +251,70 @@ class GeminiChatViewProvider implements vscode.WebviewViewProvider {
                 this._activeProcess = null;
                 this._onStateChange.fire('idle');
             },
-            this._outputChannel
+            this._outputChannel,
+            (suggestion) => {
+                this._onCodeSuggestion(suggestion);
+            }
         );
         this._activeProcess.start(text, this._currentSessionId);
+    }
+
+    private async _onCodeSuggestion(suggestion: { tool: string, parameters: any }) {
+        const { tool, parameters } = suggestion;
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) return;
+
+        const cwd = workspaceFolders[0].uri.fsPath;
+        const filePath = path.resolve(cwd, parameters.file_path);
+        const fileName = path.basename(filePath);
+
+        let originalContent = '';
+        if (fs.existsSync(filePath)) {
+            originalContent = fs.readFileSync(filePath, 'utf8');
+        }
+
+        let newContent = '';
+        if (tool === 'write_file') {
+            newContent = parameters.content;
+        } else if (tool === 'replace') {
+            newContent = originalContent.replace(parameters.old_string, parameters.new_string);
+        }
+
+        // Create a temporary file for the suggested content
+        const tempDir = os.tmpdir();
+        const tempFilePath = path.join(tempDir, `gemini-suggestion-${Date.now()}-${fileName}`);
+        fs.writeFileSync(tempFilePath, newContent);
+
+        const originalUri = vscode.Uri.file(filePath);
+        const tempUri = vscode.Uri.file(tempFilePath);
+
+        await vscode.commands.executeCommand('vscode.diff', originalUri, tempUri, `Gemini: ${fileName} (Suggestion)`);
+
+        const action = await vscode.window.showInformationMessage(
+            `Gemini suggested changes to ${fileName}. Do you want to apply them?`,
+            'Apply', 'Discard'
+        );
+
+        if (action === 'Apply') {
+            fs.writeFileSync(filePath, newContent);
+            vscode.window.showInformationMessage(`Applied changes to ${fileName}`);
+        } else if (action === 'Discard') {
+            if ((tool === 'replace' || tool === 'write_file') && fs.existsSync(filePath)) {
+                // If it was already applied by the CLI (e.g. in auto_edit mode), we might need to revert.
+                const currentContent = fs.readFileSync(filePath, 'utf8');
+                if (currentContent === newContent) {
+                    fs.writeFileSync(filePath, originalContent);
+                    vscode.window.showInformationMessage(`Reverted changes to ${fileName}`);
+                }
+            }
+        }
+        
+        // Clean up temp file
+        try {
+            if (fs.existsSync(tempFilePath)) {
+                fs.unlinkSync(tempFilePath);
+            }
+        } catch (e) {}
     }
 
     private _getHtmlForWebview(webview: vscode.Webview) {
@@ -348,3 +439,102 @@ class GeminiChatViewProvider implements vscode.WebviewViewProvider {
 }
 
 export function deactivate() {}
+
+class GeminiSessionsProvider implements vscode.TreeDataProvider<SessionItem> {
+    private _onDidChangeTreeData: vscode.EventEmitter<SessionItem | undefined | null | void> = new vscode.EventEmitter<SessionItem | undefined | null | void>();
+    readonly onDidChangeTreeData: vscode.Event<SessionItem | undefined | null | void> = this._onDidChangeTreeData.event;
+
+    constructor(private readonly outputChannel: vscode.OutputChannel) {}
+
+    refresh(): void {
+        this._onDidChangeTreeData.fire();
+    }
+
+    getTreeItem(element: SessionItem): vscode.TreeItem {
+        return element;
+    }
+
+    async getChildren(element?: SessionItem): Promise<SessionItem[]> {
+        if (element) return [];
+
+        const config = vscode.workspace.getConfiguration('gemini');
+        let geminiPath = config.get<string>('cliPath');
+        if (!geminiPath || geminiPath === 'gemini') {
+            geminiPath = '/home/alankrit/.nvm/versions/node/v20.20.2/bin/gemini';
+        }
+        const nodePath = '/home/alankrit/.nvm/versions/node/v20.20.2/bin/node';
+        const fallbackCwd = os.tmpdir();
+        const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || fallbackCwd;
+
+        this.outputChannel.appendLine(`[Extension] Loading session tree from ${nodePath} ${geminiPath} in ${cwd}${cwd === fallbackCwd ? ' (fallback)' : ''}`);
+
+        return new Promise((resolve) => {
+            const child = spawn(nodePath, [geminiPath, '--list-sessions'], { cwd, shell: false });
+            let stdout = '';
+            let errorOccurred = false;
+
+            child.on('error', (err: any) => {
+                errorOccurred = true;
+                if (err.code === 'ENOENT') {
+                    this.outputChannel.appendLine(`[Error] Gemini CLI not found at '${geminiPath}'. Please check VS Code settings.`);
+                    vscode.window.showErrorMessage(`Gemini CLI not found at '${geminiPath}'. Please ensure it is installed and in your PATH.`);
+                } else {
+                    this.outputChannel.appendLine(`[Error] Failed to spawn Gemini CLI: ${err.message}`);
+                }
+                resolve([]);
+            });
+
+            child.stdout.on('data', (data) => {
+                stdout += data.toString();
+            });
+
+            child.on('close', (code) => {
+                if (errorOccurred) return;
+
+                if (code !== 0) {
+                    this.outputChannel.appendLine(`[Error] Failed to list sessions with code: ${code}`);
+                    resolve([]);
+                    return;
+                }
+
+                const sessions: SessionItem[] = [];
+                const lines = stdout.split(/\r?\n/);
+                const sessionRegex = /^\s*(\d+)\.\s+(.+?)\s+\((.+?)\)\s+\[(.+?)\]/;
+
+                for (const line of lines) {
+                    const match = line.match(sessionRegex);
+                    if (match) {
+                        const [_, index, summary, age, id] = match;
+                        sessions.push(new SessionItem(
+                            summary.trim(),
+                            age.trim(),
+                            id.trim(),
+                            vscode.TreeItemCollapsibleState.None,
+                            {
+                                command: 'gemini-cli-ui.resumeSessionFromTree',
+                                title: 'Resume Session',
+                                arguments: [id.trim()]
+                            }
+                        ));
+                    }
+                }
+                resolve(sessions);
+            });
+        });
+    }
+}
+
+class SessionItem extends vscode.TreeItem {
+    constructor(
+        public readonly label: string,
+        public readonly description: string,
+        public readonly id: string,
+        public readonly collapsibleState: vscode.TreeItemCollapsibleState,
+        public readonly command?: vscode.Command
+    ) {
+        super(label, collapsibleState);
+        this.tooltip = `${this.label} (${this.description})`;
+        this.contextValue = 'session';
+        this.iconPath = new vscode.ThemeIcon('history');
+    }
+}

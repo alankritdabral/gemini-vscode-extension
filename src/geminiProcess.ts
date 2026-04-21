@@ -1,11 +1,13 @@
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process';
 import * as vscode from 'vscode';
+import * as os from 'node:os';
 
 export class GeminiProcess {
     private process: ChildProcessWithoutNullStreams | null = null;
     private onDataCallback: (data: string) => void;
     private onErrorCallback: (error: string) => void;
     private onExitCallback: (code: number | null) => void;
+    private onSuggestionCallback?: (suggestion: { tool: string, parameters: any }) => void;
     public isActive: boolean = false;
     private _buffer: string = '';
 
@@ -15,12 +17,14 @@ export class GeminiProcess {
         onData: (data: string) => void,
         onError: (error: string) => void,
         onExit: (code: number | null) => void,
-        outputChannel: vscode.OutputChannel
+        outputChannel: vscode.OutputChannel,
+        onSuggestion?: (suggestion: { tool: string, parameters: any }) => void
     ) {
         this.onDataCallback = onData;
         this.onErrorCallback = onError;
         this.onExitCallback = onExit;
         this.outputChannel = outputChannel;
+        this.onSuggestionCallback = onSuggestion;
     }
 
     public start(prompt: string, sessionId: string = 'latest') {
@@ -30,23 +34,43 @@ export class GeminiProcess {
 
         try {
             const config = vscode.workspace.getConfiguration('gemini');
-            const geminiPath = config.get<string>('cliPath') || 'gemini';
-            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            
-            this.outputChannel.appendLine(`[Extension] Attempting to spawn: ${geminiPath} in ${cwd}`);
-            
-            const args = ['-p', prompt, '-r', sessionId, '--output-format', 'stream-json'];
-            const useShell = process.platform === 'win32' || geminiPath.includes(' ');
+            let geminiPath = config.get<string>('cliPath');
+            if (!geminiPath || geminiPath === 'gemini') {
+                geminiPath = '/home/alankrit/.nvm/versions/node/v20.20.2/bin/gemini';
+            }
 
-            this.process = spawn(geminiPath, args, {
+            const nodePath = '/home/alankrit/.nvm/versions/node/v20.20.2/bin/node';
+            const fallbackCwd = os.tmpdir();
+            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || fallbackCwd;
+
+            this.outputChannel.appendLine(`[Extension] Attempting to spawn: ${nodePath} ${geminiPath} in ${cwd}${cwd === fallbackCwd ? ' (fallback)' : ''}`);
+
+            const args = [
+                geminiPath,
+                '-p', prompt,
+                '-r', sessionId,
+                '--output-format', 'stream-json',
+                '--approval-mode', 'auto_edit'
+            ];
+
+            this.process = spawn(nodePath, args, {
                 env: { ...process.env, FORCE_COLOR: '0', PYTHONUNBUFFERED: '1' },
-                shell: useShell,
+                shell: false,
                 cwd: cwd
             });
 
             if (!this.process) {
                 throw new Error('Spawn returned null process.');
             }
+
+            this.process.on('error', (err: any) => {
+                if (err.code === 'ENOENT') {
+                    this.onErrorCallback(`Error: '${nodePath}' or '${geminiPath}' not found. Please ensure Node v20 and Gemini CLI are installed.`);
+                } else {
+                    this.onErrorCallback(`Process error: ${err.message}`);
+                }
+                this.isActive = false;
+            });
 
             this.process.on('spawn', () => {
                 this.outputChannel.appendLine(`[Extension] Process spawned successfully (PID: ${this.process?.pid})`);
@@ -104,12 +128,6 @@ export class GeminiProcess {
                 this.process = null;
             });
 
-            this.process.on('error', (err: any) => {
-                this.isActive = false;
-                this.outputChannel.appendLine(`[Extension] Process Error: ${err.message}`);
-                this.onErrorCallback(err.message);
-            });
-
         } catch (error: any) {
             this.isActive = false;
             this.onErrorCallback(error.message);
@@ -130,7 +148,15 @@ export class GeminiProcess {
                 this.onDataCallback(event.content);
             }
         } else if (event.type === 'tool_use') {
-            this.onDataCallback(`[Tool Use: ${event.tool_name}]`);
+            this.outputChannel.appendLine(`[Extension] Tool Use: ${event.tool_name} with params: ${JSON.stringify(event.parameters)}`);
+            
+            if (event.tool_name === 'write_file' || event.tool_name === 'replace') {
+                if (this.onSuggestionCallback) {
+                    this.onSuggestionCallback({ tool: event.tool_name, parameters: event.parameters });
+                }
+            } else {
+                this.onDataCallback(`[Tool Use: ${event.tool_name}]`);
+            }
         } else if (event.type === 'error') {
             this.onErrorCallback(event.message || 'Unknown error');
         } else if (event.type === 'result' && event.status === 'error') {
