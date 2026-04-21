@@ -1,0 +1,103 @@
+body {
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background-color: var(--vscode-sideBar-background);
+    color: var(--vscode-sideBar-foreground);
+    font-family: var(--vscode-font-family);
+    overflow: hidden;
+}
+
+#chat-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+#messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.message {
+    padding: 8px 12px;
+    border-radius: 6px;
+    max-width: 90%;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+}
+
+.user-message {
+    align-self: flex-end;
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+}
+
+.assistant-message {
+    align-self: flex-start;
+    background-color: var(--vscode-editor-background);
+    color: var(--vscode-editor-foreground);
+    border: 1px solid var(--vscode-widget-border);
+}
+
+.error-message {
+    align-self: center;
+    background-color: var(--vscode-errorForeground);
+    color: var(--vscode-editor-background);
+    font-size: 0.9em;
+}
+
+#input-container {
+    padding: 10px;
+    background-color: var(--vscode-sideBar-background);
+    border-top: 1px solid var(--vscode-widget-border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#prompt {
+    width: 100%;
+    min-height: 60px;
+    padding: 8px;
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 4px;
+    resize: vertical;
+    font-family: inherit;
+}
+
+#controls {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+button {
+    padding: 4px 12px;
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+button#stop-btn {
+    background-color: var(--vscode-errorForeground);
+}
+
+button#clear-btn {
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+}

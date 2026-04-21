@@ -1,0 +1,86 @@
+{
+  "name": "gemini-cli-ui",
+  "displayName": "Gemini CLI UI",
+  "description": "A VS Code UI for Gemini CLI",
+  "version": "0.0.1",
+  "publisher": "your-publisher-name",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/gemini-vscode-extension.git"
+  },
+  "keywords": [
+    "gemini",
+    "ai",
+    "chat",
+    "cli"
+  ],
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:gemini-cli-ui.chatView",
+    "onCommand:gemini-cli-ui.openChat",
+    "onCommand:gemini-cli-ui.resumeSession"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Gemini Chat",
+      "properties": {
+        "gemini.cliPath": {
+          "type": "string",
+          "default": "gemini",
+          "description": "Path to the Gemini CLI binary. Default is 'gemini' (expected in PATH)."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gemini-chat-explorer",
+          "title": "Gemini",
+          "icon": "$(sparkle)"
+        }
+      ]
+    },
+    "views": {
+      "gemini-chat-explorer": [
+        {
+          "type": "webview",
+          "id": "gemini-cli-ui.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "gemini-cli-ui.openChat",
+        "title": "Gemini: Focus Chat UI"
+      },
+      {
+        "command": "gemini-cli-ui.resumeSession",
+        "title": "Gemini: Resume Session"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.39",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.58.2",
+    "@typescript-eslint/parser": "^8.58.2",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {}
+}
