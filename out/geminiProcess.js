@@ -53,6 +53,82 @@ class GeminiProcess {
         this.outputChannel = outputChannel;
         this.onSuggestionCallback = onSuggestion;
     }
+    async fetchHistory(sessionId) {
+        return new Promise((resolve) => {
+            const history = [];
+            const config = vscode.workspace.getConfiguration('gemini');
+            let geminiPath = config.get('cliPath');
+            if (!geminiPath || geminiPath === 'gemini') {
+                geminiPath = '/home/alankrit/.nvm/versions/node/v20.20.2/bin/gemini';
+            }
+            const nodePath = '/home/alankrit/.nvm/versions/node/v20.20.2/bin/node';
+            const fallbackCwd = os.tmpdir();
+            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || fallbackCwd;
+            const args = [
+                geminiPath,
+                '-r', sessionId,
+                '--output-format', 'stream-json',
+                '--approval-mode', 'plan' // Use plan mode for read-only history fetching
+            ];
+            const child = (0, node_child_process_1.spawn)(nodePath, args, {
+                env: {
+                    ...process.env,
+                    FORCE_COLOR: '0',
+                    PYTHONUNBUFFERED: '1',
+                    GEMINI_CLI_TRUST_WORKSPACE: 'true'
+                },
+                shell: false,
+                cwd: cwd
+            });
+            let buffer = '';
+            let timer;
+            const cleanup = () => {
+                clearTimeout(timer);
+                if (child.connected) {
+                    child.kill();
+                }
+            };
+            // We give it some time to dump history. 
+            // If no new messages for 1 second, we assume history is done.
+            const resetTimer = () => {
+                clearTimeout(timer);
+                timer = setTimeout(() => {
+                    cleanup();
+                    resolve(history);
+                }, 1500);
+            };
+            resetTimer();
+            child.stdout.on('data', (data) => {
+                resetTimer();
+                buffer += data.toString();
+                const lines = buffer.split(/\r?\n/);
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (trimmed.startsWith('{')) {
+                        try {
+                            const event = JSON.parse(trimmed);
+                            if (event.type === 'message') {
+                                history.push({ text: event.content, type: event.role === 'user' ? 'user' : 'assistant' });
+                            }
+                            else if (event.type === 'tool_use') {
+                                history.push({ text: `[Tool Use: ${event.tool_name}]`, type: 'assistant' });
+                            }
+                        }
+                        catch (e) { }
+                    }
+                }
+            });
+            child.on('close', () => {
+                clearTimeout(timer);
+                resolve(history);
+            });
+            child.on('error', () => {
+                clearTimeout(timer);
+                resolve(history);
+            });
+        });
+    }
     start(prompt, sessionId = 'latest') {
         if (this.process) {
             this.stop();
@@ -75,7 +151,12 @@ class GeminiProcess {
                 '--approval-mode', 'auto_edit'
             ];
             this.process = (0, node_child_process_1.spawn)(nodePath, args, {
-                env: { ...process.env, FORCE_COLOR: '0', PYTHONUNBUFFERED: '1' },
+                env: {
+                    ...process.env,
+                    FORCE_COLOR: '0',
+                    PYTHONUNBUFFERED: '1',
+                    GEMINI_CLI_TRUST_WORKSPACE: 'true'
+                },
                 shell: false,
                 cwd: cwd
             });
